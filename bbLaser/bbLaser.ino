@@ -1,19 +1,19 @@
-#include <WiFi.h>
+// #include <WiFi.h>
 #include <vector>
 #include "FS.h"
-#include "SD.h"
+#include "SD7.h"
 #include "SPI.h"
 #include <AsyncTCP.h> //https://github.com/me-no-dev/AsyncTCP
 #include <ESPAsyncWebServer.h>  //https://github.com/me-no-dev/ESPAsyncWebServer
 #include <AsyncElegantOTA.h>
 #include <ArduinoJson.h>
 #include "Button2.h"
-#include <Adafruit_NeoPixel.h>
+// #include <Adafruit_NeoPixel.h>
 
-AsyncWebServer server(80);
-AsyncWebSocket ws("/ws");
+// AsyncWebServer server(80);
+// AsyncWebSocket ws("/ws");
 
-int kppsTime = 1000000 / (20 * 1000);
+int kppsTime = 1000000 / (40 * 1000);
 volatile unsigned long timeOld;
 
 volatile unsigned long timeStart;
@@ -51,27 +51,27 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len) {
 
 bool isStreaming = false;
 
-void onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventType type, void * arg, uint8_t *data, size_t len) {
-  if (type == WS_EVT_CONNECT) {
-    //client connected
-    ESP_LOGI("ws[%s][%u] connect\n", server->url(), client->id());
-    //client->printf("I am bbLaser :)", client->id());
-    //client->ping();
-    isStreaming = true;
-  } else if (type == WS_EVT_DISCONNECT) {
-    //client disconnecteds
-    ESP_LOGI("ws[%s][%u] disconnect: %u\n", server->url(), client->id());
-    isStreaming = false;
-  } else if (type == WS_EVT_DATA) {
-    handleWebSocketMessage(arg, data, len);
+// void onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventType type, void * arg, uint8_t *data, size_t len) {
+//   if (type == WS_EVT_CONNECT) {
+//     //client connected
+//     ESP_LOGI("ws[%s][%u] connect\n", server->url(), client->id());
+//     //client->printf("I am bbLaser :)", client->id());
+//     //client->ping();
+//     isStreaming = true;
+//   } else if (type == WS_EVT_DISCONNECT) {
+//     //client disconnecteds
+//     ESP_LOGI("ws[%s][%u] disconnect: %u\n", server->url(), client->id());
+//     isStreaming = false;
+//   } else if (type == WS_EVT_DATA) {
+//     handleWebSocketMessage(arg, data, len);
 
-  }
-}
+//   }
+// }
 
 // ================ LEDS  -_,- ======================/
 
   #define LED_COUNT 9
-  Adafruit_NeoPixel strip(LED_COUNT, 2, NEO_GRB + NEO_KHZ800);     // 10 WS2812 @ PIN2
+  // Adafruit_NeoPixel strip(LED_COUNT, 2, NEO_GRB + NEO_KHZ800);     // 10 WS2812 @ PIN2
   unsigned long pixelPrevious = 0;        // Previous Pixel Millis
   int           pixelInterval = 50;       // Pixel Interval (ms)
   int           pixelQueue = 0;           // Pattern Pixel Queue
@@ -85,46 +85,42 @@ void onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventT
 Button2 buttonL, buttonR;
 
 void setup() {
-
-  
-  
   Serial.begin(115200);
   setupSD();
+  handleSerialData();
 
   //---------------- Core Featuers -_,-  --------------------//
-  WiFi.begin("Hollyshit_A", "00197633");
-  server.on("/", HTTP_GET, [](AsyncWebServerRequest * request) {
-    request->redirect("http://bblaser.bbrealm.com/?ip=" + WiFi.localIP().toString());
-  });
-  AsyncElegantOTA.begin(&server);    // Start ElegantOTA
-  // attach AsyncWebSocket
-  ws.onEvent(onWsEvent);
-  server.addHandler(&ws);
-  DefaultHeaders::Instance().addHeader("Access-Control-Allow-Origin", "*");
-  server.begin();
+  // WiFi.begin("Hollyshit_A", "00197633");
+  // server.on("/", HTTP_GET, [](AsyncWebServerRequest * request) {
+  //   request->redirect("http://bblaser.bbrealm.com/?ip=" + WiFi.localIP().toString());
+  // });
+  // AsyncElegantOTA.begin(&server);    // Start ElegantOTA
+  // // attach AsyncWebSocket
+  // ws.onEvent(onWsEvent);
+  // server.addHandler(&ws);
+  // DefaultHeaders::Instance().addHeader("Access-Control-Allow-Origin", "*");
+  // server.begin();
   setupRenderer();
   
    //---------------- Buttons -_,-  --------------------//
-  buttonL.begin(21 ,INPUT_PULLUP ,false);
-  buttonL.setTapHandler(click);
-
-  buttonR.begin(22 ,INPUT_PULLUP ,false);
-  buttonR.setTapHandler(click);
-
+  // buttonL.begin(21 ,INPUT_PULLUP ,false);
+  // buttonL.setTapHandler(click);
+  // buttonR.begin(22 ,INPUT_PULLUP ,false);
+  // buttonR.setTapHandler(click);
 
   //----------------  LEDS -_,- ------------------------//
-  strip.begin();           // INITIALIZE NeoPixel strip object (REQUIRED)
-  strip.show();            // Turn OFF all pixels ASAP
-  strip.setBrightness(100);
+  // strip.begin();           // INITIALIZE NeoPixel strip object (REQUIRED)
+  // strip.show();            // Turn OFF all pixels ASAP
+  // strip.setBrightness(100);
 
-  xTaskCreatePinnedToCore(
-    ledLoop
-    ,  "ledLoop"
-    ,  2048  // Stack size
-    ,  NULL
-    ,  3  // Priority
-    ,  NULL
-    ,  0); 
+  // xTaskCreatePinnedToCore(
+  //   ledLoop
+  //   ,  "ledLoop"
+  //   ,  2048  // Stack size
+  //   ,  NULL
+  //   ,  3  // Priority
+  //   ,  NULL
+  //   ,  0); 
     
 }
 
@@ -135,8 +131,8 @@ void loop() {
     timeOld = micros();
     draw_task();
   }
-  buttonL.loop();
-  buttonR.loop();
+  // buttonL.loop();
+  // buttonR.loop();
 }
 
 void click(Button2& btn) {

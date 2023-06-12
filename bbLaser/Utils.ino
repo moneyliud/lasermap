@@ -14,8 +14,6 @@ DynamicJsonDocument doc(4096);
 JsonArray avaliableMedia = doc.to<JsonArray>();
 int curMedia = -1;
 
-
-
 //=================  Basic Utils -_,-  =========================
 
 
@@ -25,12 +23,10 @@ void setupSD(){
         return;
     }
     uint8_t cardType = SD.cardType();
-
     if(cardType == CARD_NONE){
         Serial.println("No SD card attached");
         return;
     }
-
     Serial.print("SD Card Type: ");
     if(cardType == CARD_MMC){
         Serial.println("MMC");
@@ -145,6 +141,7 @@ void ILDAFile::dump_header(const ILDA_Header_t &header)
   tmp[8] = '\0';
   ESP_LOGI(TAG, "Frame Name: %s", tmp);
   strncpy(tmp, header.company_name, 8);
+  Serial.println(header.company_name);
   tmp[8] = '\0';
   ESP_LOGI(TAG, "Company Name: %s", tmp);
   ESP_LOGI(TAG, "Number records: %d", header.records);
@@ -159,23 +156,37 @@ ILDAFile *ilda = new ILDAFile();
 
 bool ILDAFile::read(fs::FS &fs, const char *fname)
 {
+  
+  Serial.println("start read file");
   file = fs.open(fname);
   if (!file)
   {
     return false;  
   }
+  Serial.printf("ILDA_Header_t size= %d \n",sizeof(ILDA_Header_t));
   file.read((uint8_t *)&header, sizeof(ILDA_Header_t));
+  Serial.printf("frame_name = %s",header.frame_name);
   header.records = ntohs(header.records);
   header.total_frames = ntohs(header.total_frames);
   dump_header(header);
   file_frames = header.total_frames;
   frameStart = file.position();
   //Serial.println(file_frames);
+  Serial.println("end read file");
   return true;
 }
 
 bool ILDAFile::tickNextFrame()
 {
+    // Serial.println("175");
+    // Serial.print("cur_buffer = ");
+    // Serial.println(cur_buffer);
+    // Serial.print("frames[cur_buffer].isBuffered = ");
+    // Serial.println(frames[cur_buffer].isBuffered);
+    // Serial.print("companyname = ");
+    // Serial.println(header.company_name);
+    // Serial.print("header.records = ");
+    // Serial.println(header.records);    
     if(frames[cur_buffer].isBuffered == false){
       //frames[cur_buffer].isBuffered = true;
       frames[cur_buffer].number_records = header.records;
@@ -184,18 +195,21 @@ bool ILDAFile::tickNextFrame()
       for (int i = 0; i < header.records; i++)
       {
         file.read((uint8_t *)(records + i), sizeof(ILDA_Record_t));
+        // Serial.printf("x,y,z,statusCode,color = %d,%d,%d,%d,%d\n",records[i].x,records[i].y,records[i].z,records[i].status_code,records[i].color);
         records[i].x = ntohs(records[i].x);
         records[i].y = ntohs(records[i].y);
         records[i].z = ntohs(records[i].z);
       }
-      // read the next header
-      file.read((uint8_t *)&header, sizeof(ILDA_Header_t));
-      header.records = ntohs(header.records);
-      header.total_frames = ntohs(header.total_frames);
-      
+      frames[cur_buffer].isBuffered = true;
       cur_buffer++;
+      if(cur_buffer < file_frames){
+        // read the next header
+        file.read((uint8_t *)&header, sizeof(ILDA_Header_t));
+        header.records = ntohs(header.records);
+        header.total_frames = ntohs(header.total_frames);
+      }
+      
       if(cur_buffer > bufferFrames - 1) cur_buffer = 0;
-
       cur_frame++;
       //Serial.println(cur_frame);
       if(cur_frame > file_frames - 1){
@@ -203,7 +217,9 @@ bool ILDAFile::tickNextFrame()
           if(digitalRead(4) == HIGH){ //Happy按钮，自动下一个
             nextMedia(1);
           }
-          else nextMedia(0);
+          else {
+            // nextMedia(0);
+          }
       }
       if(file_frames > 0 ){
         progressNum = ((float)cur_frame / (float)file_frames) * 9 + 0.5;
@@ -330,15 +346,22 @@ void IRAM_ATTR SPIRenderer::draw()
 {
   // Clear the interrupt
   // do we still have things to draw?
-  //Serial.println(ilda->frames[frame_position].number_records);
+  // Serial.println("start draw");
+  // Serial.println(ilda->frames[frame_position].number_records);
   if (draw_position < ilda->frames[frame_position].number_records)
   {
     const ILDA_Record_t &instruction = ilda->frames[frame_position].records[draw_position];
     int y = 2048 + (instruction.x * 1024) / 32768;
     int x = 2048 + (instruction.y * 1024) / 32768;
-    //Serial.print(instruction.x);
-   //Serial.print(" ");
-    //Serial.println(instruction.y);
+
+    // Serial.print("x,y=");
+    // Serial.print(instruction.x);
+    // Serial.print(" ");
+    // Serial.println(instruction.y);
+    // Serial.print("x,y=");
+    // Serial.print(x);
+    // Serial.print(" ");
+    // Serial.println(y);
     // set the laser state
     
     // channel A
@@ -357,8 +380,10 @@ void IRAM_ATTR SPIRenderer::draw()
     spi_device_polling_transmit(spi, &t2);
     
     
-    
+    // Serial.println("358");
     //把激光开启↓
+    // Serial.printf("s,c = %d,%d\n",instruction.status_code,instruction.color);
+    // Serial.printf("and = %d\n",instruction.status_code & 0b01000000);
     if ((instruction.status_code & 0b01000000) == 0)
     {
       if(instruction.color <=9){  //RED
@@ -393,7 +418,7 @@ void IRAM_ATTR SPIRenderer::draw()
       digitalWrite(PIN_NUM_LASER_G, HIGH);
       digitalWrite(PIN_NUM_LASER_B, HIGH);
     }
-
+    // Serial.println("394");
     // DAC Load   
     digitalWrite(PIN_NUM_LDAC, LOW);
     digitalWrite(PIN_NUM_LDAC, HIGH);
@@ -402,16 +427,19 @@ void IRAM_ATTR SPIRenderer::draw()
   }
   else
   {
-    ilda->frames[frame_position].isBuffered = false;
+    // Serial.println("402");
+    // ilda->frames[frame_position].isBuffered = false;
     draw_position = 0;
     frame_position++;
-    if (frame_position >= bufferFrames)
+    // Serial.printf("fp,ff = %d,%d",frame_position,ilda->file_frames);
+    if (frame_position >= bufferFrames || frame_position >= ilda->file_frames )
     {
       frame_position = 0;
     }
     if(!isStreaming){
       xTaskNotifyGive( fileBufferHandle );
     }
+    // Serial.println("414");
   }
 }
 
@@ -474,6 +502,8 @@ void setupRenderer(){
     Serial.println(ESP.getFreeHeap());
     ilda->frames = (ILDA_Frame_t *)malloc(sizeof(ILDA_Frame_t) * bufferFrames);
     for(int i =0;i<bufferFrames;i++){
+        ilda->frames[i].isBuffered = false;
+        ilda->frames[i].number_records = 0;
         ilda->frames[i].records = (ILDA_Record_t *)malloc(sizeof(ILDA_Record_t) * MAXRECORDS);
       }
     Serial.print("RAM After:");
@@ -481,6 +511,7 @@ void setupRenderer(){
     nextMedia(1);
     renderer = new SPIRenderer();
     renderer->start();
+    Serial.println("setupRenderer end:");
   }
 
 
@@ -527,33 +558,33 @@ void nextMedia(int position){
 }
 
 //=============  LED  -_,- ================//
-uint32_t Wheel(byte WheelPos) {
-  WheelPos = 255 - WheelPos;
-  if(WheelPos < 85) {
-    return strip.Color(255 - WheelPos * 3, 0, WheelPos * 3);
-  }
-  if(WheelPos < 170) {
-    WheelPos -= 85;
-    return strip.Color(0, WheelPos * 3, 255 - WheelPos * 3);
-  }
-  WheelPos -= 170;
-  return strip.Color(WheelPos * 3, 255 - WheelPos * 3, 0);
-}
+// uint32_t Wheel(byte WheelPos) {
+//   WheelPos = 255 - WheelPos;
+//   if(WheelPos < 85) {
+//     return strip.Color(255 - WheelPos * 3, 0, WheelPos * 3);
+//   }
+//   if(WheelPos < 170) {
+//     WheelPos -= 85;
+//     return strip.Color(0, WheelPos * 3, 255 - WheelPos * 3);
+//   }
+//   WheelPos -= 170;
+//   return strip.Color(WheelPos * 3, 255 - WheelPos * 3, 0);
+// }
 
-void rainbow(uint8_t wait) {
-  if(pixelInterval != wait)
-    pixelInterval = wait;                   
-  for(uint16_t i=0; i < pixelNumber; i++) {
-    if(i < progressNum){
-      strip.setPixelColor(pixelNumber - i, Wheel((i * 4 + pixelCycle ) & 255)); //  Update delay time  
-    }    
-    else strip.setPixelColor(pixelNumber - i,strip.Color(0, 0, 0));
-  }
-  strip.show();                             //  Update strip to match
-  pixelCycle+=4;                             //  Advance current cycle
-  if(pixelCycle >= 256)
-    pixelCycle = 0;                         //  Loop the cycle back to the begining
-}
+// void rainbow(uint8_t wait) {
+//   if(pixelInterval != wait)
+//     pixelInterval = wait;                   
+//   for(uint16_t i=0; i < pixelNumber; i++) {
+//     if(i < progressNum){
+//       strip.setPixelColor(pixelNumber - i, Wheel((i * 4 + pixelCycle ) & 255)); //  Update delay time  
+//     }    
+//     else strip.setPixelColor(pixelNumber - i,strip.Color(0, 0, 0));
+//   }
+//   strip.show();                             //  Update strip to match
+//   pixelCycle+=4;                             //  Advance current cycle
+//   if(pixelCycle >= 256)
+//     pixelCycle = 0;                         //  Loop the cycle back to the begining
+// }
 
 //====================================//
 
@@ -584,27 +615,27 @@ void fileBufferLoop(void *pvParameters){
   }
 }
 
-unsigned long timeDog2 = 0;
-void ledLoop(void *pvParameters){
-  for (;;){
-    unsigned long currentMillis = millis(); 
-    if(currentMillis - timeDog2 > 1000){
-      timeDog2 = currentMillis;
-      TIMERG0.wdt_wprotect=TIMG_WDT_WKEY_VALUE;
-      TIMERG0.wdt_feed=1;
-      TIMERG0.wdt_wprotect=0;
-    }
-    if(currentMillis - pixelPrevious >= pixelInterval) {        //  Check for expired time
-      pixelPrevious = currentMillis;                            //  Run current frame
-      if(!isStreaming){
-        rainbow(30); // Flowing rainbow cycle along the whole strip
-      }
-      else{
-        for(uint16_t i=0; i < pixelNumber; i++) {
-            strip.setPixelColor(i,strip.Color(0, 255, 0)); //  Update delay time  
-        }
-        strip.show();        
-      }
-    }    
-  }  
-}
+// unsigned long timeDog2 = 0;
+// void ledLoop(void *pvParameters){
+//   for (;;){
+//     unsigned long currentMillis = millis(); 
+//     if(currentMillis - timeDog2 > 1000){
+//       timeDog2 = currentMillis;
+//       TIMERG0.wdt_wprotect=TIMG_WDT_WKEY_VALUE;
+//       TIMERG0.wdt_feed=1;
+//       TIMERG0.wdt_wprotect=0;
+//     }
+//     if(currentMillis - pixelPrevious >= pixelInterval) {        //  Check for expired time
+//       pixelPrevious = currentMillis;                            //  Run current frame
+//       if(!isStreaming){
+//         rainbow(30); // Flowing rainbow cycle along the whole strip
+//       }
+//       else{
+//         for(uint16_t i=0; i < pixelNumber; i++) {
+//             strip.setPixelColor(i,strip.Color(0, 255, 0)); //  Update delay time  
+//         }
+//         strip.show();        
+//       }
+//     }    
+//   }  
+// }
