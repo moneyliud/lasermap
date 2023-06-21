@@ -1,9 +1,9 @@
 // #include <WiFi.h>
 #include <vector>
 #include "FS.h"
-#include "SD7.h"
+#include "SD.h"
 #include "SPI.h"
-#include <AsyncTCP.h> //https://github.com/me-no-dev/AsyncTCP
+#include <AsyncTCP.h>           //https://github.com/me-no-dev/AsyncTCP
 #include <ESPAsyncWebServer.h>  //https://github.com/me-no-dev/ESPAsyncWebServer
 #include <AsyncElegantOTA.h>
 #include <ArduinoJson.h>
@@ -13,41 +13,41 @@
 // AsyncWebServer server(80);
 // AsyncWebSocket ws("/ws");
 
-int kppsTime = 1000000 / (40 * 1000);
+int kppsTime = 1000000 / (50 * 1000);
 volatile unsigned long timeOld;
 
 volatile unsigned long timeStart;
 // ================= Streaming -_,- =========================//
-void handleWebSocketMessage(void *arg, uint8_t *data, size_t len) {
-  AwsFrameInfo *info = (AwsFrameInfo*)arg;
-  //单帧
-  if (info->final && info->index == 0 && info->len == len) {
-    handleStream(data, len, 0, info->len);
-  }
-  //多帧
-  else {
-    if (info->index == 0) {
-      //if (info->num == 0)
-        //Serial.println("MSG Start");
-        //Serial.println("Frame Start");
-        //handleStream(data, len, 0, info->len);
-    }
-    //Serial.print(info->index);
-    //Serial.print(" ");
-    //Serial.println(len);
-    if ((info->index + len) == info->len) {
-      //Serial.println("Frame End");
-      if (info->final) {
-        //Serial.println("MSG End");
-        //Serial.println(frameLen);
-        handleStream(data, len, info->index, info->len);
-      }
-    }
-    else{
-      handleStream(data, len, info->index, info->len);
-    }
-  }
-}
+// void handleWebSocketMessage(void *arg, uint8_t *data, size_t len) {
+//      *info = (AwsFrameInfo*)arg;
+//   //单帧
+//   if (info->final && info->index == 0 && info->len == len) {
+//     handleStream(data, len, 0, info->len);
+//   }
+//   //多帧
+//   else {
+//     if (info->index == 0) {
+//       //if (info->num == 0)
+//         //Serial.println("MSG Start");
+//         //Serial.println("Frame Start");
+//         //handleStream(data, len, 0, info->len);
+//     }
+//     //Serial.print(info->index);
+//     //Serial.print(" ");
+//     //Serial.println(len);
+//     if ((info->index + len) == info->len) {
+//       //Serial.println("Frame End");
+//       if (info->final) {
+//         //Serial.println("MSG End");
+//         //Serial.println(frameLen);
+//         handleStream(data, len, info->index, info->len);
+//       }
+//     }
+//     else{
+//       handleStream(data, len, info->index, info->len);
+//     }
+//   }
+// }
 
 bool isStreaming = false;
 
@@ -70,25 +70,23 @@ bool isStreaming = false;
 
 // ================ LEDS  -_,- ======================/
 
-  #define LED_COUNT 9
-  // Adafruit_NeoPixel strip(LED_COUNT, 2, NEO_GRB + NEO_KHZ800);     // 10 WS2812 @ PIN2
-  unsigned long pixelPrevious = 0;        // Previous Pixel Millis
-  int           pixelInterval = 50;       // Pixel Interval (ms)
-  int           pixelQueue = 0;           // Pattern Pixel Queue
-  int           pixelCycle = 0;           // Pattern Pixel Cycle
-  uint16_t      pixelCurrent = 0;         // Pattern Current Pixel Number
-  uint16_t      pixelNumber = LED_COUNT;  // Total Number of Pixels
-  uint16_t      progressNum = 0;
-  
-// ==================================
+#define LED_COUNT 9
+// Adafruit_NeoPixel strip(LED_COUNT, 2, NEO_GRB + NEO_KHZ800);     // 10 WS2812 @ PIN2
+unsigned long pixelPrevious = 0;   // Previous Pixel Millis
+int pixelInterval = 50;            // Pixel Interval (ms)
+int pixelQueue = 0;                // Pattern Pixel Queue
+int pixelCycle = 0;                // Pattern Pixel Cycle
+uint16_t pixelCurrent = 0;         // Pattern Current Pixel Number
+uint16_t pixelNumber = LED_COUNT;  // Total Number of Pixels
+uint16_t progressNum = 0;
 
+// ==================================
+ 
 Button2 buttonL, buttonR;
 
 void setup() {
   Serial.begin(115200);
   setupSD();
-  handleSerialData();
-
   //---------------- Core Featuers -_,-  --------------------//
   // WiFi.begin("Hollyshit_A", "00197633");
   // server.on("/", HTTP_GET, [](AsyncWebServerRequest * request) {
@@ -101,8 +99,7 @@ void setup() {
   // DefaultHeaders::Instance().addHeader("Access-Control-Allow-Origin", "*");
   // server.begin();
   setupRenderer();
-  
-   //---------------- Buttons -_,-  --------------------//
+  //---------------- Buttons -_,-  --------------------//
   // buttonL.begin(21 ,INPUT_PULLUP ,false);
   // buttonL.setTapHandler(click);
   // buttonR.begin(22 ,INPUT_PULLUP ,false);
@@ -113,15 +110,8 @@ void setup() {
   // strip.show();            // Turn OFF all pixels ASAP
   // strip.setBrightness(100);
 
-  // xTaskCreatePinnedToCore(
-  //   ledLoop
-  //   ,  "ledLoop"
-  //   ,  2048  // Stack size
-  //   ,  NULL
-  //   ,  3  // Priority
-  //   ,  NULL
-  //   ,  0); 
-    
+  // func,name,stacksize,,priority,handle,core
+  xTaskCreatePinnedToCore(serialReadLoop, "serialReadLoop", 8192, NULL, 10, NULL, 0);
 }
 
 void loop() {
@@ -131,15 +121,15 @@ void loop() {
     timeOld = micros();
     draw_task();
   }
+  handleSerialData();
   // buttonL.loop();
   // buttonR.loop();
 }
 
 void click(Button2& btn) {
-    if (btn == buttonL) {
-      goPrev();
-    } else if (btn == buttonR) {
-      goNext();
-    }
+  if (btn == buttonL) {
+    goPrev();
+  } else if (btn == buttonR) {
+    goNext();
+  }
 }
-
