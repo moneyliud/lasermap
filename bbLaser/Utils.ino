@@ -2,7 +2,7 @@
 #include "soc/timer_group_struct.h"
 #include "soc/timer_group_reg.h"
 #include <esp_attr.h>
-#define MAXRECORDS 3000
+#define MAXRECORDS 5000
 #include <string>
 
 File root;
@@ -92,7 +92,7 @@ typedef struct
   uint16_t frame_number;
   uint16_t total_frames;
   uint8_t projector_number;
-  uint8_t reserved2;
+  uint8_t reserved2; // 帧持续时间
 } ILDA_Header_t;
 
 typedef struct
@@ -128,6 +128,46 @@ public:
   volatile int cur_frame;
   volatile int cur_buffer;
 };
+
+
+//==============   Renderer -_,- ========================//
+
+TaskHandle_t fileBufferHandle;
+
+typedef struct spi_device_t *spi_device_handle_t;  ///< Handle for a device on a SPI bus
+class SPIRenderer {
+private:
+  TaskHandle_t spi_task_handle;
+  spi_device_handle_t spi;
+  volatile int draw_position;
+  volatile int frame_position;
+
+public:
+  SPIRenderer();
+  void IRAM_ATTR draw();
+  void start();
+  void reset();
+  friend void spi_draw_timer(void *para);
+};
+
+#include <cstring>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "driver/spi_master.h"
+#include "driver/gpio.h"
+#include <Ticker.h>
+
+#define PIN_NUM_MISO -1
+#define PIN_NUM_MOSI 25
+#define PIN_NUM_CLK 26
+#define PIN_NUM_CS 27
+#define PIN_NUM_LDAC 33
+#define PIN_NUM_LASER_R 13
+#define PIN_NUM_LASER_G 16
+#define PIN_NUM_LASER_B 17
+
+SPIRenderer *renderer = NULL;
+//==============   Renderer END ========================//
 
 ILDAFile::ILDAFile() {
   frames = NULL;
@@ -170,6 +210,7 @@ bool ILDAFile::read(fs::FS &fs, const char *fname) {
   if (!file) {
     return false;
   }
+  renderer->reset();
   Serial.printf("ILDA_Header_t size= %d \n", sizeof(ILDA_Header_t));
   file.read((uint8_t *)&header, sizeof(ILDA_Header_t));
   Serial.printf("frame_name = %s", header.frame_name);
@@ -180,6 +221,7 @@ bool ILDAFile::read(fs::FS &fs, const char *fname) {
   frameStart = file.position();
   //Serial.println(file_frames);
   Serial.println("end read file");
+  cur_buffer = 0;
   return true;
 }
 
@@ -194,7 +236,7 @@ bool ILDAFile::tickNextFrame() {
   // Serial.print("header.records = ");
   // Serial.println(header.records);
   if (frames[cur_buffer].isBuffered == false) {
-    //frames[cur_buffer].isBuffered = true;
+    frames[cur_buffer].isBuffered = true;
     frames[cur_buffer].number_records = header.records;
     //frames[cur_buffer].records = (ILDA_Record_t *)malloc(sizeof(ILDA_Record_t) * header.records);
     ILDA_Record_t *records = frames[cur_buffer].records;
@@ -205,7 +247,7 @@ bool ILDAFile::tickNextFrame() {
       records[i].y = ntohs(records[i].y);
       records[i].z = ntohs(records[i].z);
     }
-    frames[cur_buffer].isBuffered = true;
+    // frames[cur_buffer].isBuffered = true;
     cur_buffer++;
     if (cur_buffer < file_frames) {
       // read the next header
@@ -222,7 +264,7 @@ bool ILDAFile::tickNextFrame() {
       if (digitalRead(4) == HIGH) {  //Happy按钮，自动下一个
         nextMedia(1);
       } else {
-        // nextMedia(0);
+        nextMedia(0);
       }
     }
     if (file_frames > 0) {
@@ -296,50 +338,13 @@ bool ILDAFile::parseStream(uint8_t *data, size_t len, int frameIndex, int totalL
   } else return false;  //This frame has been buffered and not display yet.. 该帧已缓存且未Render，可能是读文件、串流太快了？忽视掉就好 0w0
 }
 
-//==============   Renderer -_,- ========================//
-
-TaskHandle_t fileBufferHandle;
-
-typedef struct spi_device_t *spi_device_handle_t;  ///< Handle for a device on a SPI bus
-class SPIRenderer {
-private:
-  TaskHandle_t spi_task_handle;
-  spi_device_handle_t spi;
-  volatile int draw_position;
-  volatile int frame_position;
-
-public:
-  SPIRenderer();
-  void IRAM_ATTR draw();
-  void start();
-  friend void spi_draw_timer(void *para);
-};
-
-#include <cstring>
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "driver/spi_master.h"
-#include "driver/gpio.h"
-#include <Ticker.h>
-
-#define PIN_NUM_MISO -1
-#define PIN_NUM_MOSI 25
-#define PIN_NUM_CLK 26
-#define PIN_NUM_CS 27
-#define PIN_NUM_LDAC 33
-#define PIN_NUM_LASER_R 13
-#define PIN_NUM_LASER_G 16
-#define PIN_NUM_LASER_B 17
-
-Ticker drawer;
-
-SPIRenderer *renderer;
 
 
 void draw_task() {
-  renderer->draw();
+  if(renderer != NULL){
+    renderer->draw();
+  }
 }
-
 
 void IRAM_ATTR SPIRenderer::draw() {
   // Clear the interrupt
@@ -347,6 +352,13 @@ void IRAM_ATTR SPIRenderer::draw() {
   // Serial.println("start draw");
   // Serial.println(ilda->frames[frame_position].number_records);
   // printf("draw_position=%d , number_records=%d \n",draw_position,ilda->frames[frame_position].number_records);
+  static unsigned long frame_durate_time = millis();
+  if (isLoading == true){
+    return;
+  }
+  // Serial.println("358");
+  // Serial.println(draw_position);
+  // Serial.println(ilda->frames[frame_position].number_records);
   if (draw_position < ilda->frames[frame_position].number_records) {
     const ILDA_Record_t &instruction = ilda->frames[frame_position].records[draw_position];
     // Serial.print("x,y=");
@@ -420,23 +432,39 @@ void IRAM_ATTR SPIRenderer::draw() {
     draw_position++;
   } else {
     // Serial.println("402");
-    // ilda->frames[frame_position].isBuffered = false;
+    unsigned long curmillis = millis();
     draw_position = 0;
-    frame_position++;
-    // Serial.printf("fp,ff = %d,%d",frame_position,ilda->file_frames);
-    if (frame_position >= bufferFrames || frame_position >= ilda->file_frames) {
-      frame_position = 0;
+    if(ilda->frames[frame_position].number_records>0){
+     Serial.printf("reserved2= %d, projector_number= %d\n",header.reserved2,header.projector_number);
+    Serial.printf("curmillis = %d, frame_durate_time= %d, reserved2= %d\n",curmillis,frame_durate_time,header.reserved2*1000);
     }
-    if (!isStreaming) {
-      xTaskNotifyGive(fileBufferHandle);
+    if(curmillis- frame_durate_time > header.reserved2*1000){
+      frame_durate_time = curmillis;
+      ilda->frames[frame_position].isBuffered = false;
+      frame_position++;
+      // Serial.printf("fp,ff = %d,%d",frame_position,ilda->file_frames);
+      if (frame_position >= bufferFrames || frame_position >= ilda->file_frames) {
+        frame_position = 0;
+      }
+      if (!isStreaming) {
+        xTaskNotifyGive(fileBufferHandle);
+      }
+      // Serial.println("414");
     }
-    // Serial.println("414");
+    else{
+
+    }
   }
 }
 
 SPIRenderer::SPIRenderer() {
   frame_position = 0;
   draw_position = 0;
+}
+
+void SPIRenderer::reset(){
+  frame_position = 0;
+  draw_position = 0;  
 }
 
 void SPIRenderer::start() {
@@ -496,8 +524,8 @@ void setupRenderer() {
   }
   Serial.print("RAM After:");
   Serial.println(ESP.getFreeHeap());
-  nextMedia(1);
   renderer = new SPIRenderer();
+  nextMedia(1);
   renderer->start();
   Serial.println("setupRenderer end:");
 }
@@ -593,7 +621,6 @@ void fileBufferLoop(void *pvParameters) {
         buttonState = 0;
       }
       if (!ilda->tickNextFrame()) {
-
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
       }
     }
