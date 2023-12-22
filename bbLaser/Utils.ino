@@ -7,8 +7,8 @@
 
 File root;
 static const char *TAG = "ilda";
-static const char *TMP_FILE = "/bbLaser/_tmpfile.ild";
-const int bufferFrames = 3;
+static const char *TMP_FILE = "/bbLaser/product.ild";
+const int bufferFrames = 4;
 DynamicJsonDocument doc(4096);
 JsonArray avaliableMedia = doc.to<JsonArray>();
 
@@ -54,7 +54,7 @@ void setupSD() {
 
   uint64_t cardSize = SD.cardSize() / (1024 * 1024);
   Serial.printf("SD Card Size: %lluMB\n", cardSize);
-  SD.remove(TMP_FILE);
+  // SD.remove(TMP_FILE);
   root = SD.open("/bbLaser");
   while (true) {
     File entry = root.openNextFile();
@@ -111,6 +111,7 @@ typedef struct
   ILDA_Record_t *records;
   uint16_t number_records;
   bool isBuffered = false;
+  uint8_t duration = 0;
 } ILDA_Frame_t;
 
 class ILDAFile {
@@ -126,6 +127,7 @@ public:
   ILDA_Frame_t *frames;
   volatile int file_frames;
   volatile int cur_frame;
+  volatile int cur_frame_render;
   volatile int cur_buffer;
 };
 
@@ -173,6 +175,7 @@ ILDAFile::ILDAFile() {
   frames = NULL;
   file_frames = 0;
   cur_frame = 0;
+  cur_frame_render = 0;
   cur_buffer = 0;
 }
 
@@ -219,7 +222,7 @@ bool ILDAFile::read(fs::FS &fs, const char *fname) {
   dump_header(header);
   file_frames = header.total_frames;
   frameStart = file.position();
-  //Serial.println(file_frames);
+  Serial.printf("file_frames=%d\n",file_frames);
   Serial.println("end read file");
   cur_buffer = 0;
   return true;
@@ -238,6 +241,7 @@ bool ILDAFile::tickNextFrame() {
   if (frames[cur_buffer].isBuffered == false) {
     frames[cur_buffer].isBuffered = true;
     frames[cur_buffer].number_records = header.records;
+    frames[cur_buffer].duration = header.reserved2;
     //frames[cur_buffer].records = (ILDA_Record_t *)malloc(sizeof(ILDA_Record_t) * header.records);
     ILDA_Record_t *records = frames[cur_buffer].records;
     for (int i = 0; i < header.records; i++) {
@@ -249,24 +253,37 @@ bool ILDAFile::tickNextFrame() {
     }
     // frames[cur_buffer].isBuffered = true;
     cur_buffer++;
-    if (cur_buffer < file_frames) {
+    if (cur_buffer > bufferFrames - 1) {
+      cur_buffer = 0;
+    }
+    if (cur_frame < file_frames) {
       // read the next header
-      file.read((uint8_t *)&header, sizeof(ILDA_Header_t));
-      header.records = ntohs(header.records);
-      header.total_frames = ntohs(header.total_frames);
+      // file.read((uint8_t *)&header, sizeof(ILDA_Header_t));
+      // Serial.printf("cur_frame_name = %s\n", header.frame_name);
+      // header.records = ntohs(header.records);
+      // header.total_frames = ntohs(header.total_frames);
+      cur_frame++;
     }
-
-    if (cur_buffer > bufferFrames - 1) cur_buffer = 0;
-    cur_frame++;
-    //Serial.println(cur_frame);
-    if (cur_frame > file_frames - 1) {
+    else{
+      file.seek(0);
       cur_frame = 0;
-      if (digitalRead(4) == HIGH) {  //Happy按钮，自动下一个
-        nextMedia(1);
-      } else {
-        nextMedia(0);
-      }
     }
+    file.read((uint8_t *)&header, sizeof(ILDA_Header_t));
+    Serial.printf("cur_frame_name = %s\n", header.frame_name);
+    header.records = ntohs(header.records);
+    header.total_frames = ntohs(header.total_frames);
+    Serial.printf("263 cur_frame = %d\n",cur_frame);
+    // if (cur_frame > file_frames - 1) {
+    //   cur_frame = 0;
+    //   // cur_frame_render = 0;
+    //   if (digitalRead(4) == HIGH) {  //Happy按钮，自动下一个
+    //     nextMedia(1);
+    //   } else {
+    //     Serial.println("next");        
+    //     //暂时不自动播放下一个
+    //     //nextMedia(0);
+    //   }
+    // }
     if (file_frames > 0) {
       progressNum = ((float)cur_frame / (float)file_frames) * 9 + 0.5;
     } else progressNum = 9;
@@ -435,14 +452,20 @@ void IRAM_ATTR SPIRenderer::draw() {
     unsigned long curmillis = millis();
     draw_position = 0;
     if(ilda->frames[frame_position].number_records>0){
-     Serial.printf("reserved2= %d, projector_number= %d\n",header.reserved2,header.projector_number);
-    Serial.printf("curmillis = %d, frame_durate_time= %d, reserved2= %d\n",curmillis,frame_durate_time,header.reserved2*1000);
+      // Serial.printf("reserved2= %d, projector_number= %d\n",header.reserved2,header.projector_number);
+      // Serial.printf("curmillis = %d, frame_durate_time= %d, reserved2= %d\n",curmillis,frame_durate_time,header.reserved2*1000);
     }
-    if(curmillis- frame_durate_time > header.reserved2*1000){
+    if(curmillis- frame_durate_time >ilda->frames[frame_position].duration * 1000){
       frame_durate_time = curmillis;
-      ilda->frames[frame_position].isBuffered = false;
-      frame_position++;
-      // Serial.printf("fp,ff = %d,%d",frame_position,ilda->file_frames);
+      if (ilda->file_frames != 1){
+        ilda->frames[frame_position].isBuffered = false;
+        frame_position++;
+        ilda->cur_frame_render++;
+      }
+      // ilda->cur_frame++;
+      Serial.printf("fp,ff = %d,%d\n",frame_position,ilda->file_frames);
+      Serial.printf("cur_buffer = %d\n",ilda->cur_buffer);
+
       if (frame_position >= bufferFrames || frame_position >= ilda->file_frames) {
         frame_position = 0;
       }
@@ -565,8 +588,11 @@ void nextMedia(int position) {
   }
   if (curMedia >= avaliableMedia.size()) curMedia = 0;
   if (curMedia < 0) curMedia = avaliableMedia.size() - 1;
+  Serial.printf("avaliableMedia.size() = %d\n",avaliableMedia.size());
   String filePath = String("/bbLaser/") += avaliableMedia[curMedia].as<String>();
+  Serial.printf("filePath = %s\n",filePath);
   ilda->cur_frame = 0;
+  ilda->cur_frame_render = 0;
   ilda->read(SD, filePath.c_str());
 }
 
@@ -653,7 +679,9 @@ void handleSerialData() {
       ilda->frames[i].isBuffered = false;
       ilda->frames[i].number_records = 0;
     }
+    ilda->cur_buffer = 0;
     ilda->cur_frame = 0;
+    ilda->cur_frame_render = 0;
     ilda->read(SD, TMP_FILE);
   }
   uint8_t serialFileBuffer[2048];
